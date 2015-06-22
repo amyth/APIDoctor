@@ -8,12 +8,17 @@ module.
 @author: Amyth Singh <mail@amythsingh.com>
 """
 
-
 ## Imports
 import json
+import requests
+import time
 
 from config import settings
 from utils import errors
+
+
+PASSED = 'completed successfully'
+FAILED = 'failed'
 
 
 class Checkup(object):
@@ -22,7 +27,7 @@ class Checkup(object):
     the set of API urls to log the timings and performance.
     """
 
-    def __init__(self):
+    def __init__(self, settings=settings):
         """
         Sets required attributes to be used by the checkup script
         on class intialization.
@@ -33,6 +38,9 @@ class Checkup(object):
         self.avg_req_no = settings.AVERAGE_REQUESTS
         self.rtvars = settings.RTVARS
         self.request_queue = self.response_queue = []
+        self.decimals = settings.TIME_DECIMALS
+        self.delay = settings.DELAY
+        self.headers = settings.HEADERS
 
         ## call the setup method
         self._setup()
@@ -70,3 +78,94 @@ class Checkup(object):
             raise errors.ConfigurationError(str(err))
         except ValueError as err:
             raise errors.ConfigurationError(str(err))
+
+    def _to_seconds(self, t):
+        """
+        Converts the given time objsct into seconds
+        """
+
+        frmt = "{0:.%sf}" % (self.decimals)
+        return float(frmt.format(t))
+
+    def add_get_variables(self, url, data):
+        """
+        Adds the get variables to the url if any.
+        """
+
+        if data:
+            return '%s?%s' % (url, urllib.urlencode(data))
+
+        return url
+
+    def get_request_headers(self, resource):
+        """
+        Returns the updated request headers for the given resource
+        """
+
+        headers = self.headers
+        resource_headers = resource.get('headers')
+        if resource_headers:
+            headers.update(resource_headers)
+
+        return headers
+
+    def process(self):
+        """
+        Processes all the requests in the queue and log results.
+        """
+
+
+        for resource in self.request_queue:
+        
+            times = 0
+            time_list = []
+
+            while times < self.avg_req_no:
+
+                url = '%s%s' % (self.server_url, resource.get('path'))
+
+                ## append get variables to the url if any
+                url = self.add_get_variables(url, resource.get('get_data'))
+
+                ## get request headers
+                request_headers = self.get_request_headers(resource)
+                request_method = resource.get('request_type').lower().strip()
+                if request_method in ['post', 'put']:
+                    data = resource.get('data', None)
+                    if data:
+                        data = json.dumps(data)
+
+                ## make the request and store the response in a variable
+                start_time = time.time()
+                mtd = getattr(requests, request_method)
+                response = mtd(url, data=data, headers=request_headers)
+                end_time = time.time()
+
+                ## Add delay right here
+                time.sleep(self.delay)
+                time_taken = end_time - start_time
+                taken = self.to_seconds(time_taken)
+
+                if response.status_code == resource.get('expected_status_code'):
+                    response_status = PASSED
+                else:
+                    response_status = FAILED
+
+                print 'Request for "%s" %s with status code %s.'\
+                        ' Response time was %s.' % (
+                        resource.get('name'), response_status,
+                        response.status_code, taken)
+
+                times += 1
+                time_list.append(time_taken)
+
+            print "\nAverage time taken = %s\n" % self._to_seconds(sum(
+                time_list) / len(time_list))
+
+    def to_seconds(self, t):
+        """
+        Converts the given time objsct into seconds
+        """
+
+        return "%s second(s)" % self._to_seconds(t)
+
