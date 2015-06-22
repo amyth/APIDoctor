@@ -58,3 +58,6 @@ target/
 
 # API json file
 apis.json
+
+# results file
+results.csv
